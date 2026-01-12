@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "798487941010",
+    "project_id": "my-space-chat-442715",
+    "storage_bucket": "my-space-chat-442715.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:798487941010:android:abc123def456ghi789jkl012",
+        "android_client_info": {
+          "package_name": "com.example.my_space_connect"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "798487941010-iva79gs7m58gqfaridkac2nupfi5r5pa.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEVELOPMENT_KEY_FOR_TESTING_ONLY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "798487941010-iva79gs7m58gqfaridkac2nupfi5r5pa.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

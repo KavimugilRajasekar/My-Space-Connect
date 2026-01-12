@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Google Sign-In OAuth client ID -->
+    <string name="default_web_client_id">798487941010-iva79gs7m58gqfaridkac2nupfi5r5pa.apps.googleusercontent.com</string>
+    <string name="server_client_id">798487941010-j832tj5am5i0955ls8udhm78186i7dvp.apps.googleusercontent.com</string>
+</resources>
