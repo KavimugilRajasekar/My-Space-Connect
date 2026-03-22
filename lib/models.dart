@@ -60,24 +60,33 @@ class Message extends HiveObject {
 class ChatSession extends HiveObject {
   @HiveField(0)
   final String id;
-  
+
   @HiveField(1)
   final String title;
-  
+
   @HiveField(2)
   final DateTime createdAt;
-  
+
   @HiveField(3)
   final DateTime lastUpdated;
-  
+
   @HiveField(4)
   final List<Message> messages;
-  
+
   @HiveField(5)
   final String? recipientId;
-  
+
   @HiveField(6)
   final String? profileImageBase64;
+
+  @HiveField(7)
+  DateTime? lastConnected;
+
+  @HiveField(8)
+  String? peerName;
+
+  @HiveField(9)
+  String? peerUuid;
 
   ChatSession({
     required this.id,
@@ -86,6 +95,9 @@ class ChatSession extends HiveObject {
     required this.lastUpdated,
     this.recipientId,
     this.profileImageBase64,
+    this.lastConnected,
+    this.peerName,
+    this.peerUuid,
     List<Message>? messages,
   }) : messages = messages ?? [];
 
@@ -98,6 +110,11 @@ class ChatSession extends HiveObject {
       lastUpdated: DateTime.parse(json['lastUpdated'] as String),
       recipientId: json['recipientId'] as String?,
       profileImageBase64: json['profileImageBase64'] as String?,
+      lastConnected: json['lastConnected'] != null
+          ? DateTime.parse(json['lastConnected'] as String)
+          : null,
+      peerName: json['peerName'] as String?,
+      peerUuid: json['peerUuid'] as String?,
       messages: messagesList
           .map((msg) => Message.fromJson(msg as Map<String, dynamic>))
           .toList(),
@@ -112,6 +129,9 @@ class ChatSession extends HiveObject {
       'lastUpdated': lastUpdated.toIso8601String(),
       'recipientId': recipientId,
       'profileImageBase64': profileImageBase64,
+      'lastConnected': lastConnected?.toIso8601String(),
+      'peerName': peerName,
+      'peerUuid': peerUuid,
       'messages': messages.map((msg) => msg.toJson()).toList(),
     };
   }
@@ -124,6 +144,9 @@ class ChatSession extends HiveObject {
     List<Message>? messages,
     String? recipientId,
     String? profileImageBase64,
+    DateTime? lastConnected,
+    String? peerName,
+    String? peerUuid,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -133,6 +156,9 @@ class ChatSession extends HiveObject {
       messages: messages ?? this.messages,
       recipientId: recipientId ?? this.recipientId,
       profileImageBase64: profileImageBase64 ?? this.profileImageBase64,
+      lastConnected: lastConnected ?? this.lastConnected,
+      peerName: peerName ?? this.peerName,
+      peerUuid: peerUuid ?? this.peerUuid,
     );
   }
 }

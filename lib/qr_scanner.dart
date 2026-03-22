@@ -404,6 +404,19 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
       decodedString = decodedString.replaceAll(RegExp(r'[^\x20-\x7E]'), '');
       print('Cleaned decoded string: $decodedString');
 
+      // Try to parse as JSON (new format with user data)
+      try {
+        final jsonData = jsonDecode(decodedString);
+        if (jsonData is Map<String, dynamic>) {
+          // New format with structured user data
+          print('Parsed JSON QR data: $jsonData');
+          return decodedString; // Return full JSON string for processing
+        }
+      } catch (e) {
+        // Not JSON, treat as legacy UUID format
+        print('Not JSON format, treating as legacy UUID');
+      }
+
       return decodedString;
     } catch (e) {
       print('Error decoding scanned data: $e');

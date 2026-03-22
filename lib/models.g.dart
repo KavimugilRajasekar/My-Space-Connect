@@ -70,16 +70,19 @@ class ChatSessionAdapter extends TypeAdapter<ChatSession> {
       title: fields[1] as String,
       createdAt: fields[2] as DateTime,
       lastUpdated: fields[3] as DateTime,
+      messages: (fields[4] as List?)?.cast<Message>(),
       recipientId: fields[5] as String?,
       profileImageBase64: fields[6] as String?,
-      messages: (fields[4] as List?)?.cast<Message>(),
+      lastConnected: fields[7] as DateTime?,
+      peerName: fields[8] as String?,
+      peerUuid: fields[9] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatSession obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(10)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -93,7 +96,13 @@ class ChatSessionAdapter extends TypeAdapter<ChatSession> {
       ..writeByte(5)
       ..write(obj.recipientId)
       ..writeByte(6)
-      ..write(obj.profileImageBase64);
+      ..write(obj.profileImageBase64)
+      ..writeByte(7)
+      ..write(obj.lastConnected)
+      ..writeByte(8)
+      ..write(obj.peerName)
+      ..writeByte(9)
+      ..write(obj.peerUuid);
   }
 
   @override

@@ -1,15 +1,11 @@
-import 'integration_tests/server_connectivity_test.dart'
-    as server_connectivity_test;
-import 'integration_tests/message_flow_test.dart' as message_flow_test;
-import 'integration_tests/streaming_response_test.dart'
-    as streaming_response_test;
-import 'widget_tests/connection_indicator_test.dart'
-    as connection_indicator_test;
+import 'models_test.dart' as models_test;
+import 'qr_security_test.dart' as qr_security_test;
+import 'p2p_service_test.dart' as p2p_service_test;
+import 'webrtc_service_test.dart' as webrtc_service_test;
 
 void main() {
-  // Run all tests
-  server_connectivity_test.main();
-  message_flow_test.main();
-  streaming_response_test.main();
-  connection_indicator_test.main();
+  models_test.main();
+  qr_security_test.main();
+  p2p_service_test.main();
+  webrtc_service_test.main();
 }

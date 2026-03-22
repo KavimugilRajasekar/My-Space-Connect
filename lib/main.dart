@@ -276,6 +276,7 @@ class _MySpaceScreenState extends State<MySpaceScreen>
   final WebRTCService _webrtcService = WebRTCService();
   String _connectedEndpointId = '';
   Map<String, String> _discoveredDevices = {}; // endpointId -> name
+  Map<String, String> _peerEndpointMap = {}; // peerIdentifier -> endpointId
 
   // Add a GlobalKey for the ScaffoldState to control the sidebar
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -346,6 +347,9 @@ class _MySpaceScreenState extends State<MySpaceScreen>
 
     // Initialize image picker
     _imagePicker = ImagePicker();
+
+    // Add text controller listener for icon toggling
+    _textController.addListener(_onTextChanged);
 
     // Initialize Hive and load data
     _loadChatSessions();
@@ -492,8 +496,11 @@ class _MySpaceScreenState extends State<MySpaceScreen>
         _isConnected = true;
       });
       print("Connected to P2P endpoint: $id");
+
+      // Update lastConnected time for this peer and send profile data
+      _updatePeerOnConnect(id);
     };
-    
+
     _p2pService.onDisconnected = (id) {
       setState(() {
         if (_connectedEndpointId == id) {
@@ -502,14 +509,16 @@ class _MySpaceScreenState extends State<MySpaceScreen>
         }
       });
     };
-    
+
     _p2pService.onPayloadReceived = (id, payload) {
       if (payload.type == PayloadType.BYTES) {
         String jsonString = utf8.decode(payload.bytes!);
         Map<String, dynamic> data = jsonDecode(jsonString);
-        
+
         if (data['type'] == 'message') {
-          _handleIncomingP2PMessage(Message.fromJson(data['message']));
+          // Extract sender name if available
+          String? senderName = data['senderName'];
+          _handleIncomingP2PMessage(Message.fromJson(data['message']), senderName: senderName);
         } else if (data['type'] == 'webrtc_signal') {
           final signal = data['signal'];
           if (signal['type'] == 'offer' && mounted) {
@@ -517,6 +526,9 @@ class _MySpaceScreenState extends State<MySpaceScreen>
           } else {
             _webrtcService.handleSignal(signal);
           }
+        } else if (data['type'] == 'profile_update') {
+          // Handle incoming profile update from peer
+          _handlePeerProfileUpdate(id, data);
         }
       }
     };
@@ -526,14 +538,136 @@ class _MySpaceScreenState extends State<MySpaceScreen>
     await _p2pService.startDiscovery(userName);
   }
 
-  void _handleIncomingP2PMessage(Message message) {
+  void _handleIncomingP2PMessage(Message message, {String? senderName}) {
+    // Find the correct chat session for this sender
+    String targetChatId = _currentChatId;
+
+    if (senderName != null) {
+      // Try to find a chat for this sender
+      for (var entry in _chatSessions.entries) {
+        if (entry.value.peerName == senderName || entry.value.recipientId == senderName) {
+          targetChatId = entry.key;
+          break;
+        }
+      }
+    }
+
+    // Add message to the correct chat's session
+    if (_chatSessions.containsKey(targetChatId) && targetChatId != QUERYSPACE_CHAT_ID) {
+      final updatedSession = _chatSessions[targetChatId]!.copyWith(
+        messages: [..._chatSessions[targetChatId]!.messages, message],
+        lastUpdated: DateTime.now(),
+      );
+      _chatSessions[targetChatId] = updatedSession;
+
+      // If we're not viewing this chat, switch to it and show notification
+      if (_currentChatId != targetChatId) {
+        _showNotification('New Message from ${_chatSessions[targetChatId]?.title ?? 'Unknown'}', message.text);
+      }
+    }
+
     setState(() {
       _messages.add(message);
       _showNoteMessage = false;
     });
     _saveChatSessions();
     _scrollToBottom();
-    _showNotification('New Message', message.text);
+  }
+
+  Future<void> _updatePeerOnConnect(String endpointId) async {
+    // Find the chat session for this peer by endpoint ID or name
+    String? peerName = _discoveredDevices[endpointId];
+    if (peerName == null) return;
+
+    // Find chat session by peer name or create map
+    String? chatId;
+    String? peerUuid;
+    for (var entry in _chatSessions.entries) {
+      if (entry.value.peerName == peerName || entry.value.recipientId == peerName) {
+        chatId = entry.key;
+        peerUuid = entry.value.peerUuid;
+        break;
+      }
+    }
+
+    // Store the peer -> endpoint mapping for message routing
+    _peerEndpointMap[peerName] = endpointId;
+    if (peerUuid != null) {
+      _peerEndpointMap[peerUuid] = endpointId;
+    }
+
+    if (chatId != null) {
+      // Update lastConnected time
+      final updatedSession = _chatSessions[chatId]!.copyWith(
+        lastConnected: DateTime.now(),
+      );
+      setState(() {
+        _chatSessions[chatId!] = updatedSession;
+      });
+      await _saveChatSessions();
+    }
+
+    // Send profile data to peer
+    await _sendProfileToPeer(endpointId);
+  }
+
+  Future<void> _sendProfileToPeer(String endpointId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userName = prefs.getString('user_name') ?? '';
+      String? profileImageBase64;
+
+      // Load profile image if exists
+      final profileImagePath = prefs.getString('profile_image_path') ?? '';
+      if (profileImagePath.isNotEmpty) {
+        final file = File(profileImagePath);
+        if (await file.exists()) {
+          final bytes = await file.readAsBytes();
+          profileImageBase64 = base64Encode(bytes);
+        }
+      }
+
+      // Send profile update to peer
+      await _p2pService.sendMessage(endpointId, {
+        'type': 'profile_update',
+        'name': userName,
+        'profileImage': profileImageBase64 ?? '',
+      });
+      print('Sent profile update to peer: $endpointId');
+    } catch (e) {
+      print('Error sending profile to peer: $e');
+    }
+  }
+
+  void _handlePeerProfileUpdate(String endpointId, Map<String, dynamic> data) {
+    try {
+      final peerName = data['name'] as String? ?? 'Unknown';
+      final profileImage = data['profileImage'] as String? ?? '';
+
+      print('Received profile update from $endpointId: name=$peerName');
+
+      // Find and update the chat session for this peer
+      String? chatId;
+      for (var entry in _chatSessions.entries) {
+        if (entry.value.peerName == peerName || entry.value.recipientId == peerName) {
+          chatId = entry.key;
+          break;
+        }
+      }
+
+      if (chatId != null) {
+        final updatedSession = _chatSessions[chatId]!.copyWith(
+          profileImageBase64: profileImage.isNotEmpty ? profileImage : null,
+          lastConnected: DateTime.now(),
+        );
+        setState(() {
+          _chatSessions[chatId!] = updatedSession;
+        });
+        _saveChatSessions();
+      }
+    } catch (e) {
+      print('Error handling peer profile update: $e');
+    }
   }
 
   Future<void> _initializeApp() async {
@@ -1375,13 +1509,33 @@ class _MySpaceScreenState extends State<MySpaceScreen>
       }
       return; // Skip P2P send for QuerySpace
     }
-    
-    // Send over P2P if connected to a peer
-    if (_connectedEndpointId.isNotEmpty) {
-      await _p2pService.sendMessage(_connectedEndpointId, {
+
+    // Find the endpoint ID for the current peer chat
+    String? targetEndpointId;
+    final chatSession = _chatSessions[_currentChatId];
+    if (chatSession != null) {
+      // First check if we have a direct mapping
+      if (_peerEndpointMap.containsKey(chatSession.peerUuid)) {
+        targetEndpointId = _peerEndpointMap[chatSession.peerUuid];
+      } else if (_peerEndpointMap.containsKey(chatSession.peerName)) {
+        targetEndpointId = _peerEndpointMap[chatSession.peerName];
+      }
+      // Fallback to connected endpoint if we're in a chat with the connected peer
+      else if (_connectedEndpointId.isNotEmpty) {
+        targetEndpointId = _connectedEndpointId;
+      }
+    }
+
+    // Send over P2P if we have a target endpoint
+    if (targetEndpointId != null && targetEndpointId.isNotEmpty) {
+      await _p2pService.sendMessage(targetEndpointId, {
         'type': 'message',
         'message': message.toJson(),
+        'senderName': _userName,
       });
+      print('Message sent to $targetEndpointId');
+    } else {
+      print('No endpoint found for peer - message not sent. Peer may be out of range.');
     }
   }
 
@@ -1537,6 +1691,81 @@ class _MySpaceScreenState extends State<MySpaceScreen>
         );
       }
     });
+  }
+
+  Widget _buildLeadingAvatar() {
+    // For QuerySpace chat, show the app icon
+    if (_currentChatId == QUERYSPACE_CHAT_ID) {
+      return ClipOval(
+        child: Image.asset(
+          'assets/icons/mychatconnect.png',
+          width: 32,
+          height: 32,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
+    // For peer chats, show their profile image or initial
+    final chatSession = _chatSessions[_currentChatId];
+    if (chatSession != null && chatSession.profileImageBase64 != null && chatSession.profileImageBase64!.isNotEmpty) {
+      return ClipOval(
+        child: Image.memory(
+          base64Decode(chatSession.profileImageBase64!),
+          width: 32,
+          height: 32,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
+    // Show user's own profile image or initial
+    if (_profileImagePath.isNotEmpty) {
+      return ClipOval(
+        child: Image.file(
+          File(_profileImagePath),
+          width: 32,
+          height: 32,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
+    // Fallback to initial
+    return CircleAvatar(
+      radius: 16,
+      backgroundColor: Colors.grey[300],
+      child: Text(
+        _userName.isNotEmpty ? _userName[0].toUpperCase() : 'U',
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.black,
+          fontFamily: 'Comfortaa',
+        ),
+      ),
+    );
+  }
+
+  String _formatLastConnected(DateTime? lastConnected) {
+    if (lastConnected == null) {
+      return 'Never connected';
+    }
+
+    final now = DateTime.now();
+    final difference = now.difference(lastConnected);
+
+    if (difference.inMinutes < 1) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays}d ago';
+    } else {
+      // For older connections, show the date
+      return '${lastConnected.day}/${lastConnected.month}/${lastConnected.year}';
+    }
   }
 
   Widget _buildMessage(Message message, int index) {
@@ -1926,17 +2155,8 @@ class _MySpaceScreenState extends State<MySpaceScreen>
         shape: Border(bottom: BorderSide(color: Colors.black, width: 1.5)),
         leading: Container(
           margin: EdgeInsets.all(4),
-          child: IconButton(
-            padding: EdgeInsets.zero,
-            icon: ClipOval(
-              child: Image.asset(
-                'assets/icons/mychatconnect.png',
-                width: 32,
-                height: 32,
-                fit: BoxFit.cover,
-              ),
-            ),
-            onPressed: () {
+          child: GestureDetector(
+            onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -1949,6 +2169,7 @@ class _MySpaceScreenState extends State<MySpaceScreen>
                 ),
               );
             },
+            child: _buildLeadingAvatar(),
           ),
         ),
         actions: [
@@ -2562,7 +2783,9 @@ class _MySpaceScreenState extends State<MySpaceScreen>
                                                   ),
                                                   SizedBox(height: 4),
                                                   Text(
-                                                    '${chatSession.messages.length} messages',
+                                                    chatId == QUERYSPACE_CHAT_ID
+                                                        ? 'Your assistant'
+                                                        : _formatLastConnected(chatSession.lastConnected),
                                                     style: TextStyle(
                                                       fontFamily: 'Comfortaa',
                                                       fontSize: 13,
@@ -2800,8 +3023,29 @@ class _MySpaceScreenState extends State<MySpaceScreen>
 
   Future<void> _createChatForScannedUser(String peerInfo) async {
     try {
-      // Generate a unique chat ID
-      final chatId = 'chat_${peerInfo.hashCode}';
+      // Parse peer info - could be JSON (new format) or legacy UUID string
+      String peerName = peerInfo;
+      String peerUuid = peerInfo;
+      String? profileImagePath;
+
+      try {
+        final jsonData = jsonDecode(peerInfo);
+        if (jsonData is Map<String, dynamic>) {
+          // New format with structured user data
+          peerName = jsonData['name'] as String? ?? peerInfo;
+          peerUuid = jsonData['uuid'] as String? ?? peerInfo;
+          profileImagePath = jsonData['profileImage'] as String?;
+          print('Parsed QR data - name: $peerName, uuid: $peerUuid');
+        }
+      } catch (e) {
+        // Not JSON format, use legacy behavior (peerInfo is the UUID)
+        print('Legacy QR format detected');
+        peerName = peerInfo;
+        peerUuid = peerInfo;
+      }
+
+      // Generate a unique chat ID based on peer UUID
+      final chatId = 'chat_${peerUuid.hashCode}';
 
       if (_chatSessions.containsKey(chatId)) {
         setState(() {
@@ -2816,11 +3060,13 @@ class _MySpaceScreenState extends State<MySpaceScreen>
       // Create new chat session for the P2P peer
       final newSession = ChatSession(
         id: chatId,
-        title: peerInfo, // Use peer info as title
+        title: peerName.isNotEmpty ? peerName : 'Unknown User', // Use parsed name as title
         createdAt: DateTime.now(),
         lastUpdated: DateTime.now(),
-        recipientId: peerInfo,
-        profileImageBase64: null,
+        recipientId: peerUuid,
+        peerName: peerName,
+        peerUuid: peerUuid,
+        profileImageBase64: null, // Will be updated when peer connects
         messages: [],
       );
 
@@ -2868,7 +3114,27 @@ class _MySpaceScreenState extends State<MySpaceScreen>
   void _startCall() async {
     if (_currentChatId == QUERYSPACE_CHAT_ID || _currentChatId.isEmpty) return;
 
-    // Show a simple calling dialog as a starting point
+    // Find the correct endpoint for the current peer chat
+    String? targetEndpointId;
+    final chatSession = _chatSessions[_currentChatId];
+    if (chatSession != null) {
+      if (_peerEndpointMap.containsKey(chatSession.peerUuid)) {
+        targetEndpointId = _peerEndpointMap[chatSession.peerUuid];
+      } else if (_peerEndpointMap.containsKey(chatSession.peerName)) {
+        targetEndpointId = _peerEndpointMap[chatSession.peerName];
+      } else if (_connectedEndpointId.isNotEmpty) {
+        targetEndpointId = _connectedEndpointId;
+      }
+    }
+
+    if (targetEndpointId == null || targetEndpointId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Peer is not connected. Please ensure they are in range.')),
+      );
+      return;
+    }
+
+    // Show calling dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -2876,10 +3142,10 @@ class _MySpaceScreenState extends State<MySpaceScreen>
         backgroundColor: Colors.white,
         title: Column(
           children: [
-            const CircularBotIcon(size: 40),
+            _buildPeerAvatar(chatSession, 40),
             const SizedBox(height: 16),
             Text(
-              'Calling ${_chatSessions[_currentChatId]?.title ?? "User"}...',
+              'Calling ${chatSession?.title ?? "User"}...',
               style: const TextStyle(fontFamily: 'Comfortaa', fontWeight: FontWeight.bold),
             ),
           ],
@@ -2912,10 +3178,10 @@ class _MySpaceScreenState extends State<MySpaceScreen>
       await _webrtcService.initRenderers();
       await _webrtcService.initPeerConnection();
 
-      // Listen for signaling messages from the WebRTC service
+      // Set up signaling callback to send to the correct endpoint
       _webrtcService.onSignalingMessage = (signal) {
-        if (_connectedEndpointId.isNotEmpty) {
-          _p2pService.sendMessage(_connectedEndpointId, {
+        if (targetEndpointId != null && targetEndpointId.isNotEmpty) {
+          _p2pService.sendMessage(targetEndpointId, {
             'type': 'webrtc_signal',
             'signal': signal,
           });
@@ -2933,9 +3199,46 @@ class _MySpaceScreenState extends State<MySpaceScreen>
       }
     }
   }
+
+  Widget _buildPeerAvatar(ChatSession? chatSession, double size) {
+    if (chatSession != null && chatSession.profileImageBase64 != null && chatSession.profileImageBase64!.isNotEmpty) {
+      return ClipOval(
+        child: Image.memory(
+          base64Decode(chatSession.profileImageBase64!),
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+    // Fallback to initial
+    return CircleAvatar(
+      radius: size / 2,
+      backgroundColor: Colors.grey[300],
+      child: Text(
+        (chatSession?.title ?? 'U')[0].toUpperCase(),
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.black,
+          fontFamily: 'Comfortaa',
+          fontSize: size / 2,
+        ),
+      ),
+    );
+  }
+
   void _showIncomingCallDialog(String endpointId, Map<String, dynamic> offer) {
     String peerName = _discoveredDevices[endpointId] ?? 'Unknown Peer';
-    
+
+    // Find the chat session for this peer to get their profile image
+    ChatSession? peerChat;
+    for (var entry in _chatSessions.entries) {
+      if (entry.value.peerName == peerName || entry.value.recipientId == peerName) {
+        peerChat = entry.value;
+        break;
+      }
+    }
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -2943,9 +3246,9 @@ class _MySpaceScreenState extends State<MySpaceScreen>
         backgroundColor: Colors.white,
         title: Column(
           children: [
-            const Icon(Icons.call_received, size: 48, color: Colors.green),
+            _buildPeerAvatar(peerChat, 48),
             const SizedBox(height: 16),
-            Text('Incoming Call from $peerName', 
+            Text('Incoming Call from $peerName',
               style: const TextStyle(fontFamily: 'Comfortaa', fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
@@ -2970,13 +3273,24 @@ class _MySpaceScreenState extends State<MySpaceScreen>
               try {
                 await _webrtcService.initRenderers();
                 await _webrtcService.initPeerConnection();
+
+                // Set up signaling callback
+                _webrtcService.onSignalingMessage = (signal) {
+                  if (endpointId.isNotEmpty) {
+                    _p2pService.sendMessage(endpointId, {
+                      'type': 'webrtc_signal',
+                      'signal': signal,
+                    });
+                  }
+                };
+
                 await _webrtcService.handleSignal(offer);
               } catch (e) {
                 print('Error accepting call: $e');
               }
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green, 
+              backgroundColor: Colors.green,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),

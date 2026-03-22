@@ -55,7 +55,7 @@ class _QrPopupState extends State<QrPopup> {
     }
   }
 
-  // Encrypt user ID using XOR with the provided key
+  // Encrypt user data (name, uuid, profile image hash) using XOR with the provided key
   String _encryptData(String data) {
     final key =
         'fbba7f175ebcb54045564072f6a79bcb61fd9b05ab10f8101f8cbfcbc8ae0780';
@@ -76,6 +76,18 @@ class _QrPopupState extends State<QrPopup> {
     return result
         .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
         .join('');
+  }
+
+  // Create JSON payload with user data for QR code
+  String _createQrPayload() {
+    // Create a map with user data
+    final Map<String, dynamic> userData = {
+      'name': _userName,
+      'uuid': _userUid,
+      'profileImage': _profileImagePath.isNotEmpty ? _profileImagePath : '',
+    };
+    // Encode as JSON string
+    return jsonEncode(userData);
   }
 
   // Capture the entire shareable portion as image
@@ -243,7 +255,8 @@ class _QrPopupState extends State<QrPopup> {
 
   @override
   Widget build(BuildContext context) {
-    final encryptedData = _encryptData(_userUid);
+    final qrPayload = _createQrPayload();
+    final encryptedData = _encryptData(qrPayload);
 
     return AlertDialog(
       title: const Text(
