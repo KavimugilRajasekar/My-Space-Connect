@@ -18,15 +18,12 @@ class QrPopup extends StatefulWidget {
 }
 
 class _QrPopupState extends State<QrPopup> {
-  String _userEmail = '';
+  String _userName = '';
+  String _userUid = '';
   String _profileImagePath = '';
   bool _isLoading = true;
   final GlobalKey _shareKey =
       GlobalKey(); // This key is for the entire shareable portion
-
-  // Hardcoded key for storing user email
-  static const String USER_EMAIL_KEY =
-      'fbba7f175ebcb54045564072f6a79bcb61fd9b05ab10f8101f8cbfcbc8ae0780';
 
   @override
   void initState() {
@@ -37,12 +34,14 @@ class _QrPopupState extends State<QrPopup> {
   Future<void> _loadUserData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final email = prefs.getString(USER_EMAIL_KEY) ?? '';
+      final userName = prefs.getString('user_name') ?? '';
+      final userUid = prefs.getString('user_uid') ?? '';
       final profileImagePath = prefs.getString('profile_image_path') ?? '';
 
       if (mounted) {
         setState(() {
-          _userEmail = email;
+          _userName = userName;
+          _userUid = userUid;
           _profileImagePath = profileImagePath;
           _isLoading = false;
         });
@@ -56,22 +55,21 @@ class _QrPopupState extends State<QrPopup> {
     }
   }
 
-  // Encrypt email using XOR with the provided key
-  String _encryptEmail(String email) {
+  // Encrypt user ID using XOR with the provided key
+  String _encryptData(String data) {
     final key =
         'fbba7f175ebcb54045564072f6a79bcb61fd9b05ab10f8101f8cbfcbc8ae0780';
-    final emailBytes = utf8.encode(email);
+    final dataBytes = utf8.encode(data);
     final keyBytes = utf8.encode(key);
 
     final result = <int>[];
-    for (int i = 0; i < emailBytes.length; i++) {
-      result.add(emailBytes[i] ^ keyBytes[i % keyBytes.length]);
+    for (int i = 0; i < dataBytes.length; i++) {
+      result.add(dataBytes[i] ^ keyBytes[i % keyBytes.length]);
     }
 
-    // Print the encoded email for debugging
+    // Print the encoded data for debugging
     print(
-      'Encoded email: ' +
-          result.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(''),
+      'Encoded data: ${result.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join('')}',
     );
 
     // Convert to hex string for QR code representation
@@ -245,7 +243,7 @@ class _QrPopupState extends State<QrPopup> {
 
   @override
   Widget build(BuildContext context) {
-    final encryptedEmail = _encryptEmail(_userEmail);
+    final encryptedData = _encryptData(_userUid);
 
     return AlertDialog(
       title: const Text(
@@ -331,8 +329,8 @@ class _QrPopupState extends State<QrPopup> {
                             ),
                             child: Center(
                               child: Text(
-                                _userEmail.isNotEmpty
-                                    ? _userEmail[0].toUpperCase()
+                                _userName.isNotEmpty
+                                    ? _userName[0].toUpperCase()
                                     : 'U',
                                 style: const TextStyle(
                                   fontSize: 20,
@@ -353,8 +351,8 @@ class _QrPopupState extends State<QrPopup> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: PrettyQrView.data(
-                            data: encryptedEmail,
-                            decoration: PrettyQrDecoration(
+                            data: encryptedData,
+                            decoration: const PrettyQrDecoration(
                               shape: PrettyQrSmoothSymbol(),
                               quietZone: PrettyQrQuietZone.modules(4),
                             ),

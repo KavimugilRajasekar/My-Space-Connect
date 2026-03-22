@@ -3,14 +3,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'dart:io' show Platform, File;
 import 'dart:convert';
-import 'dart:typed_data';
-import 'package:crypto/crypto.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
-import 'package:permission_handler/permission_handler.dart'; // Add this import
-import 'package:http/http.dart' as http;
-import 'config.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'models.dart';
 
 // Import the QR popup widget
 import 'widgets/qr_popup.dart';
@@ -48,9 +46,6 @@ class _ProfilePageState extends State<ProfilePage> {
   String _profileImagePath = '';
   final ImagePicker _picker = ImagePicker();
 
-  // Server URL - this will be updated after deployment
-  static const String SERVER_URL = AppConfig.SERVER_URL;
-
   // Add method to open QR scanner
   void _openQrScanner() {
     // Show the new QR popup widget
@@ -66,7 +61,7 @@ class _ProfilePageState extends State<ProfilePage> {
   void initState() {
     super.initState();
     _loadUserName();
-    _loadUserDataFromServer(); // Load additional data from server
+    // Removed _loadUserDataFromServer call
     _loadDeviceInfo();
     _loadChatStatistics();
     _loadBiometricSettings();
@@ -88,82 +83,19 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _loadUserName() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final bool userNameSaved = prefs.getBool('user_name_saved') ?? false;
       setState(() {
         _userName = prefs.getString('user_name') ?? 'User';
         _nameController.text = _userName;
-        _isNameChanged = false; // Reset change flag
-        _isNameSaved =
-            userNameSaved; // Use the saved flag from SharedPreferences
-        // Load profile image path
+        _isNameChanged = false;
         _profileImagePath = prefs.getString('profile_image_path') ?? '';
+        _isNameSaved = _userName != 'User';
       });
     } catch (e) {
       print('Error loading username: $e');
-      // Use default values if there's an error
-      setState(() {
-        _userName = 'User';
-        _nameController.text = _userName;
-        _isNameChanged = false;
-        _isNameSaved = false;
-        _profileImagePath = '';
-      });
     }
   }
 
-  Future<void> _loadUserDataFromServer() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final userEmail =
-          prefs.getString(
-            'fbba7f175ebcb54045564072f6a79bcb61fd9b05ab10f8101f8cbfcbc8ae0780',
-          ) ??
-          '';
-      final token = prefs.getString('auth_token');
-
-      if (userEmail.isEmpty || token == null) return;
-
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      };
-
-      final response = await http.get(
-        Uri.parse(
-          '$SERVER_URL/api/user-by-email/${Uri.encodeComponent(userEmail)}',
-        ),
-        headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        final userData = jsonDecode(response.body);
-
-        // Update local storage with server data
-        if (userData['displayName'] != null) {
-          await prefs.setString('user_name', userData['displayName']);
-        }
-
-        // Update profile image if available
-        if (userData['profileImage'] != null) {
-          await prefs.setString(
-            'profile_image_from_server',
-            userData['profileImage'],
-          );
-        }
-
-        setState(() {
-          if (userData['displayName'] != null) {
-            _userName = userData['displayName'];
-            _nameController.text = _userName;
-          }
-
-          // We'll keep using the local file path for display, but store server data
-        });
-      }
-    } catch (e) {
-      print('Error loading user data from server: $e');
-    }
-  }
+  // Removed _loadUserDataFromServer as it's backend dependent
 
   // Load device information
   Future<void> _loadDeviceInfo() async {
@@ -173,8 +105,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
       if (Platform.isAndroid) {
         final androidInfo = await deviceInfo.androidInfo;
-        deviceInfoString =
-            '${androidInfo.model} (Android ${androidInfo.version.release})';
+        deviceInfoString = '${androidInfo.model} (Android ${androidInfo.version.release})';
       } else if (Platform.isIOS) {
         final iosInfo = await deviceInfo.iosInfo;
         deviceInfoString = '${iosInfo.model} (iOS ${iosInfo.systemVersion})';
@@ -187,36 +118,18 @@ class _ProfilePageState extends State<ProfilePage> {
       });
     } catch (e) {
       print('Error loading device info: $e');
-      setState(() {
-        _deviceInfo = 'Device information unavailable';
-      });
     }
   }
 
-  // Load chat statistics
+  // Load chat statistics using Hive
   Future<void> _loadChatStatistics() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-
-      // Load chat list
-      final String? chatListJson = prefs.getString('chat_list');
-      int chatCount = 0;
+      final box = Hive.box<ChatSession>('chat_sessions');
+      int chatCount = box.length;
       int messageCount = 0;
-
-      if (chatListJson != null) {
-        final List<dynamic> chatListData = json.decode(chatListJson);
-        chatCount = chatListData.length;
-
-        // Count messages in all chats
-        for (String chatId in chatListData) {
-          final String? chatJson = prefs.getString('chat_$chatId');
-          if (chatJson != null) {
-            final Map<String, dynamic> chatData = json.decode(chatJson);
-            final List<dynamic> messages =
-                chatData['messages'] as List<dynamic>? ?? [];
-            messageCount += messages.length;
-          }
-        }
+      
+      for (var session in box.values) {
+        messageCount += session.messages.length;
       }
 
       setState(() {
@@ -225,115 +138,37 @@ class _ProfilePageState extends State<ProfilePage> {
       });
     } catch (e) {
       print('Error loading chat statistics: $e');
-      setState(() {
-        _totalChats = 0;
-        _totalMessages = 0;
-      });
     }
   }
 
   void _onNameChanged() {
     setState(() {
-      // Check if the name has actually changed from the original
-      _isNameChanged =
-          _nameController.text.trim() != _userName &&
+      _isNameChanged = _nameController.text.trim() != _userName &&
           _nameController.text.trim().isNotEmpty;
     });
   }
 
   Future<void> _saveUserName() async {
-    // Check if name has already been saved once
-    if (_isNameSaved) {
-      if (mounted) {}
-      return;
-    }
-
     final trimmedName = _nameController.text.trim();
-
-    // Validate that name is not empty
-    if (trimmedName.isEmpty) {
-      if (mounted) {}
-      return;
-    }
+    if (trimmedName.isEmpty) return;
 
     try {
-      // Get user email and UID from SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      final userEmail =
-          prefs.getString(
-            'fbba7f175ebcb54045564072f6a79bcb61fd9b05ab10f8101f8cbfcbc8ae0780',
-          ) ??
-          '';
-      final userUid = prefs.getString('user_uid') ?? '';
-
-      // Convert profile image to base64 if it exists
-      String? profileImageBase64;
-      if (_profileImagePath.isNotEmpty) {
-        profileImageBase64 = await _convertImageToBase64(_profileImagePath);
-      }
-
-      // Update user profile on server (which will update Firebase)
-      if (userEmail.isNotEmpty && userUid.isNotEmpty) {
-        try {
-          // Get JWT token
-          final token = prefs.getString('auth_token');
-          final headers = <String, String>{'Content-Type': 'application/json'};
-
-          if (token != null && token.isNotEmpty) {
-            headers['Authorization'] = 'Bearer $token';
-          }
-
-          // Prepare request body with all profile data
-          final requestBody = {
-            'uid': userUid,
-            'email': userEmail,
-            'displayName': trimmedName,
-          };
-
-          // Add profile image if available
-          if (profileImageBase64 != null) {
-            requestBody['profileImage'] = profileImageBase64;
-          }
-
-          final response = await http.post(
-            Uri.parse('$SERVER_URL/api/auth/update-profile'),
-            headers: headers,
-            body: jsonEncode(requestBody),
-          );
-
-          if (response.statusCode != 200) {
-            print('Failed to update profile on server: ${response.body}');
-          }
-        } catch (serverError) {
-          print('Error updating profile on server: $serverError');
-        }
-      }
-
-      // Save locally
       await prefs.setString('user_name', trimmedName);
-      await prefs.setBool(
-        'user_name_saved',
-        true,
-      ); // Ensure this is set to true
-
-      // Save profile image path locally as well
+      
       if (_profileImagePath.isNotEmpty) {
         await prefs.setString('profile_image_path', _profileImagePath);
       }
 
       setState(() {
         _userName = trimmedName;
-        _isNameChanged = false; // Reset change flag after saving
-        _isNameSaved = true; // Mark name as saved
+        _isNameChanged = false;
+        _isNameSaved = true;
       });
 
-      // Notify the parent widget (main app) about the name update
       widget.onNameUpdated?.call(trimmedName);
-
-      if (mounted) {}
     } catch (e) {
       print('Error saving username: $e');
-      if (mounted) {}
     }
   }
 
@@ -363,29 +198,10 @@ class _ProfilePageState extends State<ProfilePage> {
 
     if (confirm == true) {
       try {
-        final prefs = await SharedPreferences.getInstance();
-
-        // Get chat list
-        final String? chatListJson = prefs.getString('chat_list');
-        if (chatListJson != null) {
-          final List<dynamic> chatListData = json.decode(chatListJson);
-
-          // Remove all chat data
-          for (String chatId in chatListData) {
-            await prefs.remove('chat_$chatId');
-          }
-        }
-
-        // Clear chat list
-        await prefs.remove('chat_list');
-
-        // Reload statistics
+        await Hive.box<ChatSession>('chat_sessions').clear();
         _loadChatStatistics();
-
-        if (mounted) {}
       } catch (e) {
         print('Error clearing chat history: $e');
-        if (mounted) {}
       }
     }
   }
@@ -756,7 +572,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
                 // Biometric Security section
                 Text(
-                  'Biometric Security',
+                  'Fingerprint Security',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -774,7 +590,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     children: [
                       ListTile(
                         title: Text(
-                          'Enable Biometric Security',
+                          'Enable Fingerprint Security',
                           style: TextStyle(
                             fontSize: 16,
                             color: _biometricEnabled
@@ -943,9 +759,9 @@ class _ProfilePageState extends State<ProfilePage> {
           context: context,
           builder: (BuildContext context) {
             return AlertDialog(
-              title: const Text('Disable Biometric Security'),
+              title: const Text('Disable Fingerprint Security'),
               content: const Text(
-                'Are you sure you want to disable biometric security? This will reduce the security of your app.',
+                'Are you sure you want to disable fingerprint security? This will reduce the security of your app.',
               ),
               actions: <Widget>[
                 TextButton(
@@ -977,9 +793,23 @@ class _ProfilePageState extends State<ProfilePage> {
           return;
         }
 
-        // Test biometric authentication
+        // Check if fingerprint is specifically available
+        final bool hasFingerprint = availableBiometrics.contains(BiometricType.fingerprint) || 
+                                   availableBiometrics.contains(BiometricType.strong);
+        
+        if (!hasFingerprint) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Fingerprint hardware not found or not set up.')),
+            );
+          }
+          return;
+        }
+
+        // Test biometric authentication (fingerprint only)
         final bool didAuthenticate = await _auth.authenticate(
-          localizedReason: 'Please authenticate to enable biometric security',
+          localizedReason: 'Please use fingerprint to enable this security feature',
+          biometricOnly: true,
         );
 
         if (!didAuthenticate) {

@@ -5,8 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
-// Add this import for accessing user email
-import '../config.dart';
+// Removed AppConfig import
 
 class QRScannerScreen extends StatefulWidget {
   const QRScannerScreen({Key? key}) : super(key: key);
@@ -302,17 +301,17 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
   Future<void> _processScannedData(String scannedData) async {
     print('Processing scanned data: $scannedData');
 
-    // Get current user's email to prevent self-scanning
+    // Get current user's UID to prevent self-scanning
     final prefs = await SharedPreferences.getInstance();
-    final currentUserEmail = prefs.getString(AppConfig.USER_EMAIL_KEY) ?? '';
+    final currentUserUid = prefs.getString('user_uid') ?? '';
 
     // Decode the scanned data using the provided key
     String? decodedData = await _decodeScannedData(scannedData);
     print('Decoded data: $decodedData');
 
-    if (decodedData != null && _isValidEmail(decodedData)) {
+    if (decodedData != null && decodedData.isNotEmpty) {
       // Prevent user from scanning their own QR code
-      if (decodedData.trim() == currentUserEmail.trim()) {
+      if (decodedData.trim() == currentUserUid.trim()) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -332,7 +331,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
         return;
       }
 
-      // Save the decoded email
+      // Save the decoded user identity
       await _saveScannedUrl(decodedData);
 
       if (mounted) {
@@ -340,15 +339,16 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
       }
     } else {
       print(
-        'Invalid email. Decoded data: $decodedData, Is valid email: ${_isValidEmail(decodedData ?? '')}',
+        'Invalid data. Decoded data: $decodedData',
       );
       // Show invalid message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Invalid: Scanned QR does not contain a valid email.',
+              'Invalid: Scanned QR does not contain a valid identity.',
             ),
+
             duration: Duration(seconds: 3),
             backgroundColor: Colors.red,
           ),

@@ -118,6 +118,23 @@ class _SplashScreenState extends State<SplashScreen>
         });
       }
 
+      // Check if fingerprint is specifically available
+      final bool hasFingerprint = availableBiometrics.contains(BiometricType.fingerprint) || 
+                                 availableBiometrics.contains(BiometricType.strong);
+      
+      if (!hasFingerprint) {
+        // Fingerprint not available, but other biometrics might be. 
+        // Per user request, we only allow fingerprint.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Fingerprint hardware not found or not set up.')),
+          );
+        }
+        // If biometric was mandatory but no fingerprint, we might need a fallback or stay here.
+        // For now, let's keep the user on splash if biometric is enabled but no fingerprint.
+        return;
+      }
+
       // Keep trying authentication until successful
       bool authenticated = false;
       while (!authenticated && mounted) {
@@ -128,9 +145,10 @@ class _SplashScreenState extends State<SplashScreen>
           });
         }
 
-        // Authenticate with biometrics
+        // Authenticate with biometrics (fingerprint only)
         final bool didAuthenticate = await _auth.authenticate(
-          localizedReason: 'Please authenticate to access the app',
+          localizedReason: 'Please use fingerprint to access the app',
+          biometricOnly: true, // No PIN/Pattern fallback
         );
 
         if (didAuthenticate) {
@@ -187,42 +205,13 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _authenticateWithCooldown() {
-    // If already in cooldown, ignore the tap
-    if (_isAuthenticating && _cooldownSeconds > 0) {
-      return;
-    }
-
-    // Set the cooldown state
-    setState(() {
-      _isAuthenticating = true;
-      _cooldownSeconds = 3; // Start countdown at 3 seconds
-    });
-
-    // Cancel any existing timer
-    _cooldownTimer?.cancel();
-
-    // Start the countdown timer
-    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        _cooldownSeconds--;
-      });
-
-      // When countdown reaches 0, stop the timer and allow authentication
-      if (_cooldownSeconds <= 0) {
-        _cooldownTimer?.cancel();
-        _cooldownTimer = null;
-        setState(() {
-          _isAuthenticating = false;
-        });
-        // Call the authentication method
-        _authenticateWithBiometric();
-      }
-    });
+    // Call the authentication method immediately without cooldown
+    _authenticateWithBiometric();
   }
 
   void _proceedToMainApp() {
-    // Delay to show the splash screen for a few seconds
-    Future.delayed(const Duration(seconds: 3), () {
+    // Transition to main app quickly (shorter delay for animation to settle)
+    Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
         widget.onSplashFinished();
       }
@@ -300,24 +289,11 @@ class _SplashScreenState extends State<SplashScreen>
                       size: 48,
                       color: _isAuthenticating ? Colors.grey : Colors.black,
                     ),
-                    onPressed: _isAuthenticating
-                        ? null
-                        : () {
-                            // Retry biometric authentication with cooldown
-                            _authenticateWithCooldown();
-                          },
+                    onPressed: () {
+                      // Call the authentication method immediately
+                      _authenticateWithBiometric();
+                    },
                   ),
-                  // Show countdown timer when authenticating, otherwise show static text
-                  if (_isAuthenticating && _cooldownSeconds > 0)
-                    Text(
-                      '$_cooldownSeconds',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                        fontFamily: 'Comfortaa',
-                      ),
-                    ),
                 ],
               ),
           ],
